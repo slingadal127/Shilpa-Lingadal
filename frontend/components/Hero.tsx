@@ -2,7 +2,6 @@
 
 import { useRef, useEffect, useState } from "react";
 import { motion, useInView } from "motion/react";
-import Image from "next/image";
 import { ArrowDown, Github, Linkedin, Mail } from "lucide-react";
 import { SITE } from "@/lib/data";
 
@@ -96,15 +95,14 @@ export default function Hero() {
           <div className="flex gap-8 items-start">
             {/* Avatar */}
             <FadeUp delay={0} className="shrink-0 pt-2">
-              <div className="relative w-45 h-45 sm:w-60 sm:h-60">
-                <Image
-                  src="/avatar.jpg"
-                  alt="Shilpa Lingadal"
-                  fill
-                  className="rounded-full object-cover object-top ring-2 ring-[var(--border)]"
-                  priority
-                />
-              </div>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={`${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/avatar.jpg`}
+                alt="Shilpa Lingadal"
+                width={224}
+                height={224}
+                className="w-40 h-40 sm:w-56 sm:h-56 rounded-full object-cover object-top ring-2 ring-[var(--border)]"
+              />
             </FadeUp>
 
             {/* All text content */}
