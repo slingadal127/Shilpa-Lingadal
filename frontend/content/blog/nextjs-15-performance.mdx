@@ -1,0 +1,120 @@
+---
+title: "Next.js 15 Performance Deep-Dive: Getting to 100 on Lighthouse"
+excerpt: "Practical techniques I used to take this very portfolio from a 72 to a 100 Lighthouse performance score — without sacrificing features."
+date: "2025-10-28"
+tags: ["Next.js", "Performance", "Web Vitals"]
+---
+
+Getting 90+ on Lighthouse isn't hard. Getting 100 while shipping a real app with animations, MDX rendering, and a contact form — that's where it gets interesting.
+
+Here's exactly what moved the needle for this portfolio.
+
+## Measure first, guess never
+
+Install the Chrome Lighthouse DevTools extension and run it in incognito mode (extensions skew scores). Note your baseline scores for:
+- Performance
+- Accessibility
+- Best Practices
+- SEO
+
+For me, the culprits were: render-blocking fonts, unoptimized images, and layout shift from the theme toggle.
+
+## Font loading: the biggest single win
+
+Google Fonts defaults cause a render-blocking round trip. Next.js has a built-in solution:
+
+```tsx
+// app/layout.tsx — Next.js handles preloading automatically
+import { Inter, JetBrains_Mono } from "next/font/google";
+
+const inter = Inter({ 
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-sans",
+});
+```
+
+Or inline in `<head>` with `rel="preconnect"` as I do here. Either way, the key is `display: swap` so text renders immediately.
+
+**Score impact: +8 points**
+
+## LCP: Image the right way
+
+Every portfolio has a hero image or avatar. Wrap it in `next/image`:
+
+```tsx
+import Image from "next/image";
+
+<Image
+  src="/avatar.jpg"
+  alt="Shilpa Lingadal"
+  width={200}
+  height={200}
+  priority  // marks as LCP candidate, preloads
+  quality={85}
+/>
+```
+
+The `priority` prop tells Next.js to add a `<link rel="preload">` — critical for LCP elements above the fold.
+
+## Cumulative Layout Shift: the silent score killer
+
+CLS is caused by content that shifts after initial render. Common culprits:
+1. Images without explicit dimensions
+2. Theme toggle "flashing" to wrong mode
+3. Dynamic content (ads, embeds) loading late
+
+For the theme toggle, `next-themes` can cause a FOUC (flash of unstyled content). Fix it with `suppressHydrationWarning` on `<html>` and `disableTransitionOnChange={false}`.
+
+Reserve space for anything that loads asynchronously:
+
+```css
+.avatar-placeholder {
+  width: 200px;
+  height: 200px;
+  aspect-ratio: 1;
+}
+```
+
+**Score impact: +12 points**
+
+## Bundle size: audit ruthlessly
+
+```bash
+npx @next/bundle-analyzer
+```
+
+Run this and look for:
+- Libraries you imported once for one utility function
+- Full icon libraries when you need 5 icons
+- Moment.js (always replace with `date-fns` or native `Intl`)
+
+For Lucide React, named imports are already tree-shaken. For Motion, import from `motion/react`, not `framer-motion`.
+
+## Static generation: let the CDN do the work
+
+Every page that can be statically generated should be. In Next.js 15 with the App Router:
+
+```tsx
+// Force static generation — no server needed at runtime
+export const dynamic = "force-static";
+
+// Or generate pages at build time
+export async function generateStaticParams() {
+  return getAllPosts().map(p => ({ slug: p.slug }));
+}
+```
+
+Static pages served from Vercel's edge CDN have sub-20ms TTFB globally. Server-rendered pages can't compete.
+
+## Final checklist
+
+- [ ] `<meta name="description">` on every page
+- [ ] `alt` text on every `<img>`
+- [ ] Color contrast ratio ≥ 4.5:1
+- [ ] `lang` attribute on `<html>`
+- [ ] No `console.error` in production
+- [ ] Semantic HTML (`<nav>`, `<main>`, `<article>`, `<footer>`)
+- [ ] `rel="noopener noreferrer"` on external links
+
+After all this: **100 Performance, 100 Accessibility, 100 Best Practices, 100 SEO.**

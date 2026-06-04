@@ -1,0 +1,99 @@
+---
+title: "Building Distributed Systems in Go: Lessons from Production"
+excerpt: "After running distributed systems at scale for three companies, here are the patterns that actually hold up — and the ones that don't."
+date: "2025-11-12"
+tags: ["Go", "Distributed Systems", "Architecture"]
+---
+
+Distributed systems are deceptively simple to start and brutally hard to scale. After shipping production systems at Cloudflare, Datadog, and Stripe, I've collected a set of patterns that consistently work — and a graveyard of clever ideas that didn't.
+
+## Start with the CAP theorem, don't argue about it
+
+Every distributed system makes a trade-off between consistency and availability when a network partition occurs. The mistake I see most teams make is *not deciding* — then being surprised when the system behaves inconsistently under load.
+
+For payments (Stripe), we chose CP: strong consistency, accept reduced availability during partitions. For analytics (Datadog), we chose AP: serve slightly stale data rather than error.
+
+Decide early. Write it in the README.
+
+## Idempotency is not optional
+
+Every RPC in a distributed system can fail in three states:
+- **Success** — definitely succeeded
+- **Failure** — definitely failed  
+- **Unknown** — timed out, could have succeeded or failed
+
+For state-mutating operations, your callers *will* retry. If your endpoints aren't idempotent, you will double-charge customers, send duplicate emails, or corrupt data. Every time.
+
+In Go, the pattern is simple:
+
+```go
+type CreateOrderRequest struct {
+    IdempotencyKey string `json:"idempotency_key"`
+    // ...other fields
+}
+
+func (s *OrderService) CreateOrder(ctx context.Context, req *CreateOrderRequest) (*Order, error) {
+    existing, err := s.db.GetByIdempotencyKey(ctx, req.IdempotencyKey)
+    if err == nil {
+        return existing, nil // already processed
+    }
+    if !errors.Is(err, ErrNotFound) {
+        return nil, err
+    }
+    // process and store with idempotency key
+}
+```
+
+## Use structured errors, not string comparison
+
+I've inherited too many codebases that do `if err.Error() == "not found"`. This breaks the moment you add a typo or localize the error message.
+
+Define sentinel errors at the package boundary:
+
+```go
+var (
+    ErrNotFound   = errors.New("resource not found")
+    ErrConflict   = errors.New("resource already exists")
+    ErrForbidden  = errors.New("insufficient permissions")
+)
+```
+
+Then use `errors.Is` and `errors.As` throughout. Your HTTP layer translates these to status codes — once, in one place.
+
+## Circuit breakers beat infinite retries
+
+Exponential backoff with jitter is table stakes. But in a microservice graph, unbounded retries create *retry storms* that can cascade into full outages.
+
+Circuit breakers solve this. When a downstream service is failing, stop sending it traffic — give it time to recover. In Go, [sony/gobreaker](https://github.com/sony/gobreaker) works well:
+
+```go
+cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+    MaxRequests:  5,
+    Interval:     10 * time.Second,
+    Timeout:      30 * time.Second,
+    ReadyToTrip: func(counts gobreaker.Counts) bool {
+        return counts.ConsecutiveFailures > 3
+    },
+})
+```
+
+## The observation is in the tail
+
+P50 latency is a vanity metric. Your worst users are experiencing P99 — that's where the pain is. Profile your percentiles:
+
+| Metric | Threshold |
+|--------|-----------|
+| P50 | < 10ms |
+| P95 | < 100ms |
+| P99 | < 500ms |
+| P99.9 | < 2s |
+
+Use histograms in Prometheus, not gauges. You cannot reconstruct a histogram from gauges, but you can downsample a histogram into a gauge.
+
+## What I got wrong
+
+- **Underestimated coordination overhead.** Consensus algorithms (Raft, Paxos) sound elegant in papers; debugging leader election at 4am is not.
+- **Over-engineered the happy path.** I spent weeks on throughput optimizations but underinvested in the error recovery paths — which is what users actually experience during incidents.
+- **Distributed tracing as an afterthought.** Adding OpenTelemetry after the fact is painful. Bake it in from day one.
+
+The best distributed system is the one that's simple enough for your on-call engineer to debug alone at 3am. Build for that person first.

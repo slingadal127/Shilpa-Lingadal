@@ -1,0 +1,99 @@
+---
+title: "Go HTTP Frameworks in 2025: Why I Chose Echo Over Gin"
+excerpt: "A pragmatic comparison of Go's most popular HTTP frameworks — and why Echo's design philosophy aligns better with idiomatic Go."
+date: "2025-09-15"
+tags: ["Go", "Backend", "API Design"]
+---
+
+Go's standard library `net/http` is genuinely excellent. So why use a framework at all? And if you do, why Echo over Gin?
+
+After shipping production services with both, here's my honest take.
+
+## The case for using a framework
+
+`net/http` handles routing, but barely. Path parameters (`/users/:id`) require third-party routers or painful string parsing. Middleware composition is manual. Response helpers (JSON, XML, redirect) are boilerplate.
+
+A good framework wraps these patterns — without hiding Go underneath.
+
+## Gin: the popular choice
+
+Gin is the Rails of Go frameworks: fast, heavily documented, enormous ecosystem. If you're learning, it's fine.
+
+My issues with Gin in production:
+
+**Context type is non-standard.** Gin's `*gin.Context` is a custom type. This means middleware from the standard library doesn't compose cleanly. You lose the `context.Context` interface that the entire Go ecosystem speaks.
+
+**Error handling is awkward.** Gin uses a pattern where you call `c.JSON(500, err)` and then `return`. There's no actual early-exit; you have to remember to return after every error response.
+
+**Global middleware registration.** Gin's middleware is registered globally or per-group. Fine for simple apps, but complex authorization flows get messy.
+
+## Echo: idiomatic, minimal, fast
+
+Echo's key design decisions align better with how I think about Go:
+
+### Standard `context.Context`
+
+```go
+func (h *Handler) GetUser(c echo.Context) error {
+    ctx := c.Request().Context()  // standard context.Context
+    user, err := h.repo.Get(ctx, c.Param("id"))
+    if err != nil {
+        return echo.NewHTTPError(http.StatusNotFound, err.Error())
+    }
+    return c.JSON(http.StatusOK, user)
+}
+```
+
+Every database driver, gRPC client, and tracing library in Go accepts `context.Context`. Echo makes this natural.
+
+### Error returns, not error sinks
+
+Returning an error from your handler is idiomatic Go. Echo converts returned errors to HTTP responses through a configurable `ErrorHandler`:
+
+```go
+e.HTTPErrorHandler = func(err error, c echo.Context) {
+    var he *echo.HTTPError
+    if errors.As(err, &he) {
+        c.JSON(he.Code, map[string]any{"error": he.Message})
+        return
+    }
+    c.JSON(http.StatusInternalServerError, map[string]any{"error": "internal error"})
+}
+```
+
+One place, all errors. Compare this to Gin where every handler must manually write the response and return.
+
+### Middleware as plain functions
+
+```go
+func Logger() echo.MiddlewareFunc {
+    return func(next echo.HandlerFunc) echo.HandlerFunc {
+        return func(c echo.Context) error {
+            start := time.Now()
+            err := next(c)
+            log.Printf("%s %s %v", c.Request().Method, c.Path(), time.Since(start))
+            return err
+        }
+    }
+}
+```
+
+This is just function composition. Testable, composable, no magic.
+
+## Performance: both are fast enough
+
+Benchmarks show Echo is marginally faster than Gin for most workloads. But if your bottleneck is HTTP routing overhead rather than database queries or downstream calls, you have a different problem.
+
+For APIs doing real work, both frameworks are I/O-bound, not CPU-bound. Pick the one with the better DX.
+
+## When I'd reach for each
+
+| Use case | My choice |
+|----------|-----------|
+| New greenfield API | **Echo** |
+| Team already using Gin | **Gin** (switching cost) |
+| Max ecosystem/hiring ease | **Gin** |
+| Clean architecture, testability | **Echo** |
+| Standard library purist | **chi** |
+
+For my portfolio's Go backend: Echo, paired with Neon PostgreSQL and the `pgx/v5` driver. Clean, fast, and genuinely fun to write.

@@ -1,0 +1,15 @@
+# Next.js
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+frontend/.env.local
+frontend/.env
+
+# Go
+backend/server
+backend/*.exe
+
+# General
+.DS_Store
+*.log
+.env
